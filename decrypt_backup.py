@@ -207,7 +207,13 @@ def main():
 
     # Change to the directory where the script/executable is located
     # This allows double-clicking the executable to work properly
-    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller executable
+        script_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as Python script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
     if script_dir:
         os.chdir(script_dir)
 
