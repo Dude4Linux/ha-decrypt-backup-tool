@@ -80,7 +80,7 @@ class SecureTarFile:
 
     def __enter__(self):
         self._file = self._name.open("rb")
-        cbc_rand = self._file.read(16)
+        cbc_rand = self.read_rand_from_header(self._file)
         self._aes = Cipher(
             algorithms.AES(self._key),
             modes.CBC(generate_iv(self._key, cbc_rand)),
@@ -95,6 +95,21 @@ class SecureTarFile:
             self._tar.close()
         if self._file:
             self._file.close()
+
+    def read_rand_from_header(cls, st_file):
+        """Return header bytes."""
+        SECURETAR_MAGIC = b"SecureTar\x02\x00\x00\x00\x00\x00\x00"
+        BLOCK_SIZE = 16
+        IV_SIZE = BLOCK_SIZE
+        header = st_file.read(len(SECURETAR_MAGIC))
+        if header != SECURETAR_MAGIC:
+            cbc_rand = header
+        else:
+            plaintext_size = int.from_bytes(st_file.read(8), "big")
+            st_file.read(8)  # Skip reserved bytes
+            cbc_rand = st_file.read(IV_SIZE)
+        return cbc_rand
+
 
     def read(self, size=0):
         return self._decrypt.update(self._file.read(size))
