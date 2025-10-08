@@ -205,6 +205,12 @@ def main():
     # Check requirements first
     check_requirements()
 
+    # Change to the directory where the script/executable is located
+    # This allows double-clicking the executable to work properly
+    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    if script_dir:
+        os.chdir(script_dir)
+
     # Parse command line arguments
     args = parse_args()
 
