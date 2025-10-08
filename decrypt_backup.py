@@ -22,6 +22,7 @@ import glob
 import os
 import shutil
 import re
+import platform
 from pathlib import Path
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import (
@@ -39,6 +40,20 @@ def check_requirements():
         print("Error: Required package 'cryptography' is not installed.")
         print("Please install it using: pip install cryptography")
         sys.exit(1)
+
+def sanitize_filename(name):
+    """Sanitize filename for Windows compatibility."""
+    if platform.system() == 'Windows':
+        # Replace characters that are invalid in Windows filenames
+        invalid_chars = '<>:"|?*'
+        for char in invalid_chars:
+            name = name.replace(char, '_')
+    return name
+
+def tar_filter(member, dest_path):
+    """Filter for tar extraction to handle cross-platform filename issues."""
+    member.name = sanitize_filename(member.name)
+    return member
 
 def extract_key_from_kit(kit_path):
     """Extract encryption key from emergency kit file."""
@@ -123,7 +138,7 @@ def extract_tar(filename):
         pass
     print(f'📦 Extracting {filename}...')
     _tar = tarfile.open(name=filename, mode="r")
-    _tar.extractall(path=_dirname)
+    _tar.extractall(path=_dirname, filter=tar_filter)
     return _dirname
 
 def extract_secure_tar(filename, password):
@@ -132,7 +147,7 @@ def extract_secure_tar(filename, password):
     print(f'🔓 Decrypting {filename.split("/")[-1]}...')
     try:
         with SecureTarFile(filename, password) as _tar:
-            _tar.extractall(path=_dirname)
+            _tar.extractall(path=_dirname, filter=tar_filter)
     except tarfile.ReadError:
         print("❌ Error: Unable to extract SecureTar - possible wrong password or file is not encrypted")
         return None
