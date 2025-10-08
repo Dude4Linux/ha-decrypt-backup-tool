@@ -23,6 +23,7 @@ import os
 import shutil
 import re
 import platform
+import argparse
 from pathlib import Path
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import (
@@ -156,27 +157,74 @@ def extract_secure_tar(filename, password):
         return None
     return _dirname
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Decrypt Home Assistant backup files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                                    # Interactive mode
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --file backup.tar
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./decrypted
+        """
+    )
+    parser.add_argument(
+        '--key',
+        '-k',
+        help='Encryption key (format: XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX)'
+    )
+    parser.add_argument(
+        '--file',
+        '-f',
+        help='Specific backup .tar file to decrypt (defaults to all .tar files in current directory)'
+    )
+    parser.add_argument(
+        '--output-dir',
+        '-o',
+        help='Output directory for decrypted files (defaults to current directory)'
+    )
+    parser.add_argument(
+        '--cleanup',
+        '-c',
+        action='store_true',
+        help='Remove encrypted .tar.gz files after successful decryption (default behavior)'
+    )
+    parser.add_argument(
+        '--keep-encrypted',
+        action='store_true',
+        help='Keep encrypted .tar.gz files after decryption'
+    )
+    return parser.parse_args()
+
 def main():
     print("\n🏠 Home Assistant Backup Decryption Tool")
     print("=======================================")
-    
+
     # Check requirements first
     check_requirements()
-    
-    # Look for emergency kit file
-    kit_files = glob.glob('*emergency*kit*.txt')
-    
-    # Try to extract key from the kit file first
-    key = None
-    if kit_files:
-        key = extract_key_from_kit(kit_files[0])
-        if key:
-            print(f"✅ Found encryption key in {kit_files[0]}")
+
+    # Parse command line arguments
+    args = parse_args()
+
+    # Handle key: CLI arg > emergency kit > manual input
+    key = args.key
+
+    if not key:
+        # Look for emergency kit file
+        kit_files = glob.glob('*emergency*kit*.txt')
+
+        # Try to extract key from the kit file first
+        if kit_files:
+            key = extract_key_from_kit(kit_files[0])
+            if key:
+                print(f"✅ Found encryption key in {kit_files[0]}")
+            else:
+                print("⚠️  Could not find encryption key in emergency kit file.")
         else:
-            print("⚠️  Could not find encryption key in emergency kit file.")
-    else:
-        print("⚠️  No emergency kit file found.")
-    
+            print("⚠️  No emergency kit file found.")
+
     # If key not found, ask for manual entry
     if not key:
         print("\nPlease enter your encryption key manually.")
@@ -189,15 +237,38 @@ def main():
                 break
             else:
                 print("❌ Invalid key format. Please try again.")
-    
+    else:
+        # Validate key format from CLI
+        if not re.match(r'^([A-Z0-9]{4}-){6}[A-Z0-9]{4}$', key):
+            print("❌ Error: Invalid key format!")
+            print("Key should be in the format: XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX")
+            sys.exit(1)
+        print("✅ Key format verified")
+
+    # Change to output directory if specified
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.chdir(args.output_dir)
+        print(f"📂 Output directory: {args.output_dir}")
+
     # Look for tar files
-    tar_files = glob.glob('*.tar')
+    if args.file:
+        if not os.path.exists(args.file):
+            print(f"❌ Error: File '{args.file}' not found!")
+            sys.exit(1)
+        tar_files = [args.file]
+    else:
+        tar_files = glob.glob('*.tar')
+
     if not tar_files:
         print("❌ Error: No .tar files found!")
         print("Please place your backup .tar files in this directory.")
         sys.exit(1)
-    
+
     print(f"📁 Found {len(tar_files)} backup file(s) to process")
+
+    # Determine cleanup behavior
+    should_cleanup = not args.keep_encrypted
     
     success_count = 0
     for tar_file in tar_files:
@@ -211,7 +282,8 @@ def main():
                 
             for secure_tar in secure_tars:
                 if extract_secure_tar(secure_tar, key):
-                    os.remove(secure_tar)  # Remove the encrypted file after successful extraction
+                    if should_cleanup:
+                        os.remove(secure_tar)  # Remove the encrypted file after successful extraction
                     success_count += 1
         except Exception as e:
             print(f"❌ Error processing {tar_file}: {str(e)}")
