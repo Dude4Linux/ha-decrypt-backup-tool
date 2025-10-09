@@ -110,13 +110,6 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 - The tool removes encrypted `.tar.gz` files after successful decryption by default
   - Use `--keep-encrypted` if you want to keep them
 
-## Development
-
-Built with Python and uses:
-- `cryptography` for AES-CBC decryption
-- PyInstaller for creating standalone executables
-- GitHub Actions for automated builds
-
 ## Contributing
 
 Issues and pull requests welcome! This tool was created to solve the problem of accessing encrypted HA backups when your instance is unavailable.
