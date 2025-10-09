@@ -103,9 +103,6 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 - Ensure you have the backup `.tar` file in the same directory
 - Or use `--file` to specify the exact path
 
-### Windows: Invalid characters in filenames
-This has been fixed in recent versions. Update to the latest release.
-
 ## Security Notes
 
 - Keep your emergency kit secure - it contains your encryption key
