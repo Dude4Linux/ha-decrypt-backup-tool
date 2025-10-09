@@ -106,29 +106,12 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 ### Windows: Invalid characters in filenames
 This has been fixed in recent versions. Update to the latest release.
 
-## What Gets Decrypted?
-
-The tool decrypts Home Assistant backup files that contain:
-- Home Assistant configuration
-- Add-on data and configurations
-- SSL certificates
-- All your customizations and settings
-
-**Note:** This tool only works with **encrypted** Home Assistant backups. Unencrypted backups can be extracted with standard tar tools.
-
 ## Security Notes
 
 - Keep your emergency kit secure - it contains your encryption key
 - After decryption, store the decrypted files in a secure location
 - The tool removes encrypted `.tar.gz` files after successful decryption by default
   - Use `--keep-encrypted` if you want to keep them
-
-## Use Cases
-
-- **Disaster Recovery**: Your Home Assistant instance is down and you need to extract data
-- **Migration**: Moving to new hardware or different platform
-- **Inspection**: Check what's actually in your backups
-- **Partial Restore**: Extract specific files instead of full restore
 
 ## Development
 
