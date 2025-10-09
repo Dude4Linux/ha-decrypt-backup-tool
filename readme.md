@@ -1,65 +1,146 @@
 # Home Assistant Backup Decryption Tool
 
-This tool allows you to decrypt Home Assistant backups outside of Home Assistant, using your emergency kit or a known password.
+Decrypt Home Assistant backups outside of Home Assistant for disaster recovery, inspection, or manual restoration.
 
-## Prerequisites
+## Quick Start
 
+### Option 1: Download Executable (Easiest)
+
+**No Python installation required!**
+
+1. Download the latest release for your platform:
+   - **Windows**: `decrypt_backup-windows-amd64.exe`
+   - **macOS**: `decrypt_backup-macos-amd64`
+   - **Linux**: `decrypt_backup-linux-amd64`
+
+2. Place the executable in the same folder as your backup files
+
+3. **Windows**: Double-click the `.exe` file
+
+   **macOS/Linux**: Open Terminal and run:
+   ```bash
+   chmod +x decrypt_backup
+   xattr -d com.apple.quarantine decrypt_backup  # macOS only
+   ./decrypt_backup
+   ```
+
+That's it! The tool will automatically find your emergency kit and backup files.
+
+### Option 2: Run Python Script
+
+**Requirements:**
 - Python 3.7 or newer
-- `cryptography` package installed (`pip install cryptography`)
+- `cryptography` package: `pip install cryptography`
 
-## Setup
+**Usage:**
+```bash
+python3 decrypt_backup.py
+```
 
-1. Download the script (`decrypt_backup.py`)
-2. Make it executable:
-   ```bash
-   chmod +x decrypt_backup.py
-   ```
+## Usage Examples
 
-## Usage
+### Interactive Mode (Default)
+```bash
+./decrypt_backup
+```
+The tool will:
+- Automatically find your emergency kit file
+- Search for backup `.tar` files in the current directory
+- Prompt for your encryption key if needed
+- Decrypt all backups found
 
-1. Create a new directory for decryption
-2. Place these files in the directory:
-   - The script (`decrypt_backup.py`)
-   - Your backup .tar file
-   - Your emergency kit text file (optional)
-3. Run the script:
-   ```bash
-   ./decrypt_backup.py
-   ```
-   - If an emergency kit file is present, the script will automatically extract the key
-   - If no kit file is found or the key can't be extracted, you'll be prompted to enter the key manually
+### Command-Line Mode
+```bash
+# Provide encryption key directly
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
 
-The script will automatically:
-- Find your emergency kit and extract the encryption key
-- Process all backup files in the directory
-- Create extracted directories with the decrypted content
+# Decrypt specific file
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --file backup.tar
+
+# Specify output directory
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./my-backups
+
+# Keep encrypted files after decryption (default removes them)
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --keep-encrypted
+
+# See all options
+./decrypt_backup --help
+```
+
+## File Organization
+
+For best results, organize your files like this:
+```
+my-backup-folder/
+├── decrypt_backup                    # The executable
+├── caa3ca81f524436da04edea103302316.tar  # Your backup
+└── home_assistant_backup_emergency_kit.txt  # Your emergency kit (optional)
+```
+
+The tool will:
+1. Automatically detect and read your emergency kit
+2. Extract the outer `.tar` file
+3. Decrypt all encrypted `.tar.gz` files inside
+4. Create directories with decrypted contents
 
 ## Troubleshooting
 
-If you encounter any issues:
+### macOS: "Cannot verify developer"
+This happens because the executable is not signed with an Apple Developer certificate.
 
-1. Make sure you have the `cryptography` package installed:
-   ```bash
-   pip install cryptography
-   ```
+**Solution:**
+```bash
+xattr -d com.apple.quarantine decrypt_backup
+```
 
-2. Verify that your emergency kit file contains the encryption key
-3. Ensure your backup files are in the correct format (.tar)
-4. Check that all files are in the same directory as the script
+Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 
-## Note
+### "No emergency kit file found"
+- Make sure the emergency kit filename contains both "emergency" and "kit"
+- Or provide the key manually with `--key` flag
 
-This tool is designed to work with Home Assistant backups created with encryption enabled. It will not work with unencrypted backups or backups from other systems.
+### "No .tar files found"
+- Ensure you have the backup `.tar` file in the same directory
+- Or use `--file` to specify the exact path
 
-## Security
+### Windows: Invalid characters in filenames
+This has been fixed in recent versions. Update to the latest release.
+
+## What Gets Decrypted?
+
+The tool decrypts Home Assistant backup files that contain:
+- Home Assistant configuration
+- Add-on data and configurations
+- SSL certificates
+- All your customizations and settings
+
+**Note:** This tool only works with **encrypted** Home Assistant backups. Unencrypted backups can be extracted with standard tar tools.
+
+## Security Notes
 
 - Keep your emergency kit secure - it contains your encryption key
 - After decryption, store the decrypted files in a secure location
-- Consider deleting the emergency kit file after use if you don't need it
+- The tool removes encrypted `.tar.gz` files after successful decryption by default
+  - Use `--keep-encrypted` if you want to keep them
 
-## Support
+## Use Cases
 
-If you encounter issues, you can:
-1. Verify your emergency kit is valid by checking it in Home Assistant
-2. Ensure your backup files were properly downloaded
-3. Try creating a new backup in Home Assistant to test with
+- **Disaster Recovery**: Your Home Assistant instance is down and you need to extract data
+- **Migration**: Moving to new hardware or different platform
+- **Inspection**: Check what's actually in your backups
+- **Partial Restore**: Extract specific files instead of full restore
+
+## Development
+
+Built with Python and uses:
+- `cryptography` for AES-CBC decryption
+- PyInstaller for creating standalone executables
+- GitHub Actions for automated builds
+
+## Contributing
+
+Issues and pull requests welcome! This tool was created to solve the problem of accessing encrypted HA backups when your instance is unavailable.
+
+## License
+
+MIT License - feel free to use, modify, and distribute.
