@@ -216,6 +216,7 @@ def main():
 
     if script_dir:
         os.chdir(script_dir)
+        print(f"📂 Working directory: {os.getcwd()}")
 
     # Parse command line arguments
     args = parse_args()
