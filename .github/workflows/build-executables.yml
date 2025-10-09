@@ -43,16 +43,7 @@ jobs:
         run: |
           pyinstaller --onefile --name decrypt_backup decrypt_backup.py
 
-      - name: Upload executable to release
-        uses: softprops/action-gh-release@v1
-        if: github.event_name == 'release'
-        with:
-          files: dist/${{ matrix.artifact_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload artifact (for manual runs)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
