@@ -30,7 +30,7 @@ That's it! The tool will automatically find your emergency kit and backup files.
 
 **Requirements:**
 - Python 3.7 or newer
-- `cryptography` package: `pip install cryptography`
+- `cryptography` and `pynacl` packages: `pip install cryptography pynacl`
 
 **Usage:**
 ```bash
@@ -102,6 +102,10 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 ### "No .tar files found"
 - Ensure you have the backup `.tar` file in the same directory
 - Or use `--file` to specify the exact path
+
+## Supported Backup Formats
+
+Supports all SecureTar versions used by Home Assistant: v1 and v2 (AES-CBC) and v3 (XChaCha20-Poly1305, the default since Home Assistant 2026.4).
 
 ## Security Notes
 

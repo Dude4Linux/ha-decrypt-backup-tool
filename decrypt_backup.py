@@ -8,7 +8,7 @@ Place this script in the same directory as:
 - Your backup .tar file(s)
 
 Requirements:
-pip install cryptography
+pip install cryptography pynacl
 
 Usage:
 1. Place this script in a directory with your backup files
@@ -24,6 +24,7 @@ import shutil
 import re
 import platform
 import argparse
+import struct
 from pathlib import Path
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import (
@@ -32,15 +33,47 @@ from cryptography.hazmat.primitives.ciphers import (
     modes,
 )
 import hashlib
+import nacl.bindings.crypto_secretstream as nss
+import nacl.encoding
+from nacl.hash import blake2b
+from nacl.pwhash.argon2id import kdf as argon2id_kdf, SALTBYTES as ARGON2_SALT_SIZE
 
 def check_requirements():
     """Check if required packages are installed."""
     try:
         import cryptography
+        import nacl
     except ImportError:
-        print("Error: Required package 'cryptography' is not installed.")
-        print("Please install it using: pip install cryptography")
+        print("Error: Required package(s) not installed.")
+        print("Please install them using: pip install cryptography pynacl")
         sys.exit(1)
+
+# SecureTar v2/v3 header: 16 bytes file ID (9-byte magic + 1-byte version +
+# 6 reserved) followed by 16 bytes metadata (8-byte plaintext size + 8 reserved).
+SECURETAR_MAGIC = b"SecureTar"
+SECURETAR_FILE_ID_FORMAT = "!9sB6s"
+SECURETAR_FILE_METADATA_FORMAT = "!Q8x"
+
+AES_IV_SIZE = 16
+
+# SecureTar v3 (XChaCha20-Poly1305 secretstream) cipher-init layout:
+# root salt + validation salt + validation key + derivation salt + stream header
+V3_DERIVED_KEY_SALT_SIZE = 16
+V3_DERIVED_KEY_SIZE = 32
+V3_CHACHA20_HEADER_SIZE = nss.crypto_secretstream_xchacha20poly1305_HEADERBYTES
+V3_SECRETSTREAM_ABYTES = nss.crypto_secretstream_xchacha20poly1305_ABYTES
+V3_SECRETSTREAM_CHUNK_SIZE = 1024 * 1024
+V3_KDF_OPSLIMIT = 8
+V3_KDF_MEMLIMIT = 16 * 1024 * 1024
+
+SECURETAR_V3_CIPHER_INIT_FORMAT = (
+    f"!{ARGON2_SALT_SIZE}s"
+    f"{V3_DERIVED_KEY_SALT_SIZE}s"
+    f"{V3_DERIVED_KEY_SIZE}s"
+    f"{V3_DERIVED_KEY_SALT_SIZE}s"
+    f"{V3_CHACHA20_HEADER_SIZE}s"
+)
+SECURETAR_V3_CIPHER_INIT_SIZE = struct.calcsize(SECURETAR_V3_CIPHER_INIT_FORMAT)
 
 def sanitize_filename(name):
     """Sanitize filename for Windows compatibility."""
@@ -83,26 +116,57 @@ def generate_iv(key, salt):
         temp_iv = hashlib.sha256(temp_iv).digest()
     return temp_iv[:16]
 
+def derive_v3_root_key(password, root_salt):
+    """Derive the SecureTar v3 root key from the password using Argon2id."""
+    return argon2id_kdf(
+        nss.crypto_secretstream_xchacha20poly1305_KEYBYTES,
+        password.encode(),
+        root_salt,
+        opslimit=V3_KDF_OPSLIMIT,
+        memlimit=V3_KDF_MEMLIMIT,
+    )
+
+def derive_v3_stream_key(root_key, salt):
+    """Derive a per-file SecureTar v3 stream key from the root key."""
+    return blake2b(
+        b"",
+        key=root_key,
+        salt=salt,
+        person=b"SecureTarv3",
+        encoder=nacl.encoding.RawEncoder,
+    )
+
 class SecureTarFile:
-    """Handle encrypted tar files."""
+    """Handle encrypted tar files (SecureTar v1/v2 AES-CBC and v3 XChaCha20-Poly1305)."""
     def __init__(self, filename, password):
         self._file = None
         self._name = Path(filename)
         self._tar = None
         self._tar_mode = "r|gz"
-        self._aes = None
-        self._key = password_to_key(password)
+        self._password = password
         self._decrypt = None
+        # SecureTar v3 secretstream state
+        self._v3_state = None
+        self._v3_buffer = b""
+        self._v3_pos = 0
+        self._v3_ciphertext_size = 0
+        self._v3_done = False
 
     def __enter__(self):
         self._file = self._name.open("rb")
-        cbc_rand = self.read_rand_from_header(self._file)
-        self._aes = Cipher(
-            algorithms.AES(self._key),
-            modes.CBC(generate_iv(self._key, cbc_rand)),
-            backend=default_backend(),
-        )
-        self._decrypt = self._aes.decryptor()
+        version, plaintext_size, cipher_init = self.read_header(self._file)
+
+        if version == 3:
+            self._init_v3(cipher_init, plaintext_size)
+        else:
+            key = password_to_key(self._password)
+            aes = Cipher(
+                algorithms.AES(key),
+                modes.CBC(generate_iv(key, cipher_init)),
+                backend=default_backend(),
+            )
+            self._decrypt = aes.decryptor()
+
         self._tar = tarfile.open(fileobj=self, mode=self._tar_mode)
         return self._tar
 
@@ -112,23 +176,79 @@ class SecureTarFile:
         if self._file:
             self._file.close()
 
-    def read_rand_from_header(cls, st_file):
-        """Return header bytes."""
-        SECURETAR_MAGIC = b"SecureTar\x02\x00\x00\x00\x00\x00\x00"
-        BLOCK_SIZE = 16
-        IV_SIZE = BLOCK_SIZE
-        header = st_file.read(len(SECURETAR_MAGIC))
-        if header != SECURETAR_MAGIC:
-            cbc_rand = header
-        else:
-            plaintext_size = int.from_bytes(st_file.read(8), "big")
-            st_file.read(8)  # Skip reserved bytes
-            cbc_rand = st_file.read(IV_SIZE)
-        return cbc_rand
+    def read_header(self, st_file):
+        """Parse the SecureTar header, returning (version, plaintext_size, cipher_init)."""
+        id_bytes = st_file.read(struct.calcsize(SECURETAR_FILE_ID_FORMAT))
+        magic, version, reserved = struct.unpack(SECURETAR_FILE_ID_FORMAT, id_bytes)
 
+        if magic != SECURETAR_MAGIC:
+            # Legacy (v1) format: no header, the bytes read are the CBC salt
+            return 1, None, id_bytes
+
+        if version not in (2, 3):
+            raise tarfile.ReadError(f"Unsupported SecureTar version: {version}")
+
+        metadata = st_file.read(struct.calcsize(SECURETAR_FILE_METADATA_FORMAT))
+        (plaintext_size,) = struct.unpack(SECURETAR_FILE_METADATA_FORMAT, metadata)
+
+        if version == 2:
+            cipher_init = st_file.read(AES_IV_SIZE)
+        else:
+            cipher_init = st_file.read(SECURETAR_V3_CIPHER_INIT_SIZE)
+
+        return version, plaintext_size, cipher_init
+
+    def _init_v3(self, cipher_init, plaintext_size):
+        """Set up XChaCha20-Poly1305 secretstream decryption state (SecureTar v3)."""
+        (
+            root_salt,
+            validation_salt,
+            stored_validation_key,
+            derivation_salt,
+            stream_header,
+        ) = struct.unpack(SECURETAR_V3_CIPHER_INIT_FORMAT, cipher_init)
+
+        root_key = derive_v3_root_key(self._password, root_salt)
+        validation_key = derive_v3_stream_key(root_key, validation_salt)
+        if validation_key != stored_validation_key:
+            raise tarfile.ReadError("Invalid password for SecureTar v3 file")
+
+        stream_key = derive_v3_stream_key(root_key, derivation_salt)
+
+        self._v3_state = nss.crypto_secretstream_xchacha20poly1305_state()
+        nss.crypto_secretstream_xchacha20poly1305_init_pull(
+            self._v3_state, stream_header, stream_key
+        )
+
+        num_chunks = max(1, -(-plaintext_size // V3_SECRETSTREAM_CHUNK_SIZE))
+        self._v3_ciphertext_size = plaintext_size + num_chunks * V3_SECRETSTREAM_ABYTES
 
     def read(self, size=0):
+        if self._v3_state is not None:
+            return self._read_v3(size)
         return self._decrypt.update(self._file.read(size))
+
+    def _read_v3(self, size):
+        """Fill the plaintext buffer by pulling and decrypting secretstream chunks."""
+        while len(self._v3_buffer) < size and not self._v3_done:
+            frame_size = V3_SECRETSTREAM_CHUNK_SIZE + V3_SECRETSTREAM_ABYTES
+            remaining = self._v3_ciphertext_size - self._v3_pos
+            frame_size = min(frame_size, max(remaining, 0))
+            if frame_size == 0:
+                break
+            encrypted = self._file.read(frame_size)
+            if not encrypted:
+                break
+            self._v3_pos += len(encrypted)
+            plaintext, tag = nss.crypto_secretstream_xchacha20poly1305_pull(
+                self._v3_state, encrypted
+            )
+            self._v3_buffer += plaintext
+            if tag == nss.crypto_secretstream_xchacha20poly1305_TAG_FINAL:
+                self._v3_done = True
+
+        data, self._v3_buffer = self._v3_buffer[:size], self._v3_buffer[size:]
+        return data
 
 def extract_tar(filename):
     """Extract regular tar file."""
