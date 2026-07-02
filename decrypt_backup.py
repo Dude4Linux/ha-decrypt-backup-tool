@@ -33,6 +33,7 @@ from cryptography.hazmat.primitives.ciphers import (
     modes,
 )
 import hashlib
+import hmac
 import nacl.bindings.crypto_secretstream as nss
 import nacl.encoding
 from nacl.hash import blake2b
@@ -85,8 +86,29 @@ def sanitize_filename(name):
     return name
 
 def tar_filter(member, dest_path):
-    """Filter for tar extraction to handle cross-platform filename issues."""
+    """Filter for tar extraction: sanitizes filenames for Windows and blocks
+    path traversal / symlink escapes. Passing a custom filter to extractall()
+    bypasses tarfile's built-in 'data' filter protections entirely, so those
+    checks have to be reimplemented here instead of assumed."""
     member.name = sanitize_filename(member.name)
+
+    dest_root = os.path.realpath(dest_path)
+    target_path = os.path.realpath(os.path.join(dest_path, member.name))
+    if os.path.commonpath([dest_root, target_path]) != dest_root:
+        raise tarfile.FilterError(
+            f"Blocked path traversal attempt in tar member: {member.name}"
+        )
+
+    if member.issym() or member.islnk():
+        link_target = os.path.realpath(
+            os.path.join(dest_path, os.path.dirname(member.name), member.linkname)
+        )
+        if os.path.commonpath([dest_root, link_target]) != dest_root:
+            raise tarfile.FilterError(
+                f"Blocked tar member with unsafe link target: "
+                f"{member.name} -> {member.linkname}"
+            )
+
     return member
 
 def extract_key_from_kit(kit_path):
@@ -210,7 +232,7 @@ class SecureTarFile:
 
         root_key = derive_v3_root_key(self._password, root_salt)
         validation_key = derive_v3_stream_key(root_key, validation_salt)
-        if validation_key != stored_validation_key:
+        if not hmac.compare_digest(validation_key, stored_validation_key):
             raise tarfile.ReadError("Invalid password for SecureTar v3 file")
 
         stream_key = derive_v3_stream_key(root_key, derivation_salt)
