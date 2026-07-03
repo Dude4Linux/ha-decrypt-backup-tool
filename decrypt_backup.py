@@ -502,6 +502,11 @@ def main():
     # Check requirements first
     check_requirements()
 
+    # Remember the caller's cwd before we chdir below, so --file/--output-dir
+    # (given on the command line) can be resolved relative to it rather than
+    # the script's own directory.
+    orig_cwd = os.getcwd()
+
     # Change to the directory where the script/executable is located
     # This allows double-clicking the executable to work properly
     if getattr(sys, 'frozen', False):
@@ -517,6 +522,13 @@ def main():
 
     # Parse command line arguments
     args = parse_args()
+
+    # Resolve CLI-provided paths against the caller's original cwd, not the
+    # script's directory we just chdir'd into.
+    if args.file and not os.path.isabs(args.file):
+        args.file = os.path.join(orig_cwd, args.file)
+    if args.output_dir and not os.path.isabs(args.output_dir):
+        args.output_dir = os.path.join(orig_cwd, args.output_dir)
 
     # --info is a standalone inspection mode: it reads backup.json straight
     # out of the outer (unencrypted) tar, so it needs no key and does not
