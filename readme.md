@@ -73,6 +73,8 @@ The tool will:
 ./decrypt_backup --help
 ```
 
+Relative `--file`/`--output-dir` paths are resolved against the directory you run the command from. Everything else (the default `*.tar` search, the emergency kit search) looks in the directory the script/executable itself lives in, so double-clicking the executable works no matter where your shell's cwd happens to be.
+
 ## File Organization
 
 For best results, organize your files like this:

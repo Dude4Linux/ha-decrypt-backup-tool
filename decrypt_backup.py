@@ -463,7 +463,10 @@ Examples:
     parser.add_argument(
         '--file',
         '-f',
-        help='Specific backup .tar file to decrypt (defaults to all .tar files in current directory)'
+        help='Specific backup .tar file to decrypt. A relative path is '
+             'resolved against the directory you run this command from. '
+             '(If omitted, defaults to all .tar files found alongside the '
+             'script/executable itself.)'
     )
     parser.add_argument(
         '--extract',
@@ -480,7 +483,9 @@ Examples:
     parser.add_argument(
         '--output-dir',
         '-o',
-        help='Output directory for decrypted files (defaults to current directory)'
+        help='Output directory for decrypted files. A relative path is '
+             'resolved against the directory you run this command from. '
+             '(If omitted, defaults to alongside the script/executable itself.)'
     )
     parser.add_argument(
         '--cleanup',
