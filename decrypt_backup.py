@@ -480,6 +480,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='Decrypt Home Assistant backup files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
         epilog="""
 Examples:
   %(prog)s                                    # Interactive mode
@@ -495,6 +496,13 @@ Examples:
   # non-standard key/password instead of a Home Assistant emergency-kit key:
   %(prog)s --key 'my-google-drive-backup-password' --file 584e4299.tar
         """
+    )
+    parser.add_argument(
+        '--help',
+        '-h',
+        action='help',
+        default=argparse.SUPPRESS,
+        help='show this help message and exit'
     )
     parser.add_argument(
         '--info',
