@@ -202,10 +202,15 @@ def derive_v3_stream_key(root_key, salt):
     )
 
 class SecureTarFile:
-    """Handle encrypted tar files (SecureTar v1/v2 AES-CBC and v3 XChaCha20-Poly1305)."""
-    def __init__(self, filename, password):
-        self._file = None
-        self._name = Path(filename)
+    """Handle encrypted tar files (SecureTar v1/v2 AES-CBC and v3 XChaCha20-Poly1305).
+
+    filename is opened directly unless fileobj is given, in which case that
+    already-open, readable stream is decrypted in place instead (used by
+    --list to read a SecureTar component straight out of the outer tar
+    without ever writing it to disk)."""
+    def __init__(self, filename, password, fileobj=None):
+        self._file = fileobj
+        self._name = Path(filename) if filename is not None else None
         self._tar = None
         self._tar_mode = "r|gz"
         self._password = password
@@ -218,7 +223,8 @@ class SecureTarFile:
         self._v3_done = False
 
     def __enter__(self):
-        self._file = self._name.open("rb")
+        if self._file is None:
+            self._file = self._name.open("rb")
         version, plaintext_size, cipher_init = self.read_header(self._file)
 
         if version == 3:
@@ -420,6 +426,55 @@ def extract_secure_tar(filename, password, patterns=None):
         print(f"   → {match_counter[0]} matching file(s) extracted")
     return _dirname
 
+def _print_matching_members(inner_tar, prefix, patterns):
+    """Print prefix-joined member names matching patterns (or all, if none given)."""
+    count = 0
+    for inner_member in inner_tar:
+        relative_path = f'{prefix}/{inner_member.name}'
+        if not patterns or matches_patterns(relative_path, patterns):
+            print(relative_path)
+            count += 1
+    return count
+
+def list_backup_contents(filename, password, patterns=None):
+    """Print the file paths that would be extracted from filename, without
+    extracting or decrypting anything to disk (like `tar -t`).
+
+    Component tar.gz files are read straight out of the outer tar via
+    extractfile() and, if SecureTar-encrypted, decrypted in memory with
+    SecureTarFile(fileobj=...) - nothing is written anywhere."""
+    outer_dirname = '.'.join(filename.split('.')[:-1])
+    total = 0
+    with tarfile.open(name=filename, mode="r") as outer_tar:
+        for member in outer_tar.getmembers():
+            if not member.isfile():
+                continue
+            name = member.name[2:] if member.name.startswith('./') else member.name
+
+            if not name.endswith('.tar.gz'):
+                relative_path = f'{outer_dirname}/{name}'
+                if not patterns or matches_patterns(relative_path, patterns):
+                    print(relative_path)
+                    total += 1
+                continue
+
+            component_dirname = '.'.join(f'{outer_dirname}/{name}'.split('.')[:-2])
+            fileobj = outer_tar.extractfile(member)
+            is_plain = fileobj.read(len(GZIP_MAGIC_BYTES)) == GZIP_MAGIC_BYTES
+            fileobj.seek(0)
+
+            try:
+                if is_plain:
+                    with tarfile.open(fileobj=fileobj, mode="r|gz") as inner_tar:
+                        total += _print_matching_members(inner_tar, component_dirname, patterns)
+                else:
+                    with SecureTarFile(None, password, fileobj=fileobj) as inner_tar:
+                        total += _print_matching_members(inner_tar, component_dirname, patterns)
+            except tarfile.ReadError as e:
+                print(f"❌ Error: Unable to read {name}: {e}")
+
+    return total
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -433,6 +488,8 @@ Examples:
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./decrypted
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x '*.yaml' -x secrets.yaml
   %(prog)s --info                             # Show backup.json metadata, no key needed
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --list          # List files without extracting
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -t -x '*.yaml'  # Preview what -x would extract
 
   # Third-party add-on backup (e.g. Google Drive Backup) using its own
   # non-standard key/password instead of a Home Assistant emergency-kit key:
@@ -448,6 +505,17 @@ Examples:
              'exit without decrypting or extracting anything. No encryption '
              'key is needed since backup.json lives in the outer, '
              'unencrypted tar.'
+    )
+    parser.add_argument(
+        '--list',
+        '-t',
+        action='store_true',
+        help='List the file paths that would be extracted, like `tar -t`, '
+             'without extracting or writing anything to disk. Requires the '
+             'encryption key (unlike --info) since it has to decrypt the '
+             'SecureTar components to see what\'s inside them. Combine with '
+             '--extract/-x to preview exactly what a real extraction with '
+             'those patterns would produce.'
     )
     parser.add_argument(
         '--key',
@@ -633,9 +701,23 @@ def main():
 
     print(f"📁 Found {len(tar_files)} backup file(s) to process")
 
+    # --list previews what would be extracted (like `tar -t`) without
+    # extracting or decrypting anything to disk.
+    if args.list:
+        for tar_file in tar_files:
+            try:
+                print(f'\n📋 {tar_file}')
+                count = list_backup_contents(tar_file, key, patterns=args.extract)
+                print(f"   → {count} file(s)")
+            except tarfile.ReadError:
+                print("❌ Error: Unable to read SecureTar - possible wrong password or file is not encrypted")
+            except Exception as e:
+                print(f"❌ Error processing {tar_file}: {str(e)}")
+        return
+
     # Determine cleanup behavior
     should_cleanup = not args.keep_encrypted
-    
+
     success_count = 0
     for tar_file in tar_files:
         try:

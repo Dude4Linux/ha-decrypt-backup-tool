@@ -129,6 +129,17 @@ Use `--extract` (or `-x`) to pull out only files matching a glob pattern instead
 ./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x 'homeassistant/*/www/*'
 ```
 
+## Listing Backup Contents
+
+Use `--list` (or `-t`) to preview the file paths that would be extracted, similar to `tar -t`, without extracting or writing anything to disk. This still needs the encryption key, since it has to decrypt the SecureTar components to see what's inside them (unlike `--info`, which only reads the always-plaintext `backup.json`):
+
+```bash
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --list
+
+# Combine with -x to preview exactly what a real extraction with those patterns would produce
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -t -x '*.yaml'
+```
+
 ## Viewing Backup Info
 
 Use `--info` (or `-i`) to display a backup's metadata (name, date, HA/supervisor version, add-ons, folders, etc.) without decrypting or extracting anything. It reads `backup.json` straight out of the outer, unencrypted tar, so no encryption key is required:
