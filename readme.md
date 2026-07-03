@@ -107,6 +107,8 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 
 Supports all SecureTar versions used by Home Assistant: v1 and v2 (AES-CBC) and v3 (XChaCha20-Poly1305, the default since Home Assistant 2026.4).
 
+Also handles backup components that aren't encrypted at all (detected automatically) and third-party add-ons like Google Drive Backup that use their own non-standard key/password format — pass their key with `--key` and it's used as-is, without Home Assistant's `XXXX-XXXX-...` format check.
+
 ## Security Notes
 
 - Keep your emergency kit secure - it contains your encryption key
