@@ -63,6 +63,9 @@ The tool will:
 # Keep encrypted files after decryption (default removes them)
 ./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --keep-encrypted
 
+# Extract only files matching a pattern, like tar -x (may be repeated)
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x '*.yaml' -x secrets.yaml
+
 # See all options
 ./decrypt_backup --help
 ```
@@ -108,6 +111,18 @@ Or go to **System Preferences → Privacy & Security** and click "Allow Anyway"
 Supports all SecureTar versions used by Home Assistant: v1 and v2 (AES-CBC) and v3 (XChaCha20-Poly1305, the default since Home Assistant 2026.4).
 
 Also handles backup components that aren't encrypted at all (detected automatically) and third-party add-ons like Google Drive Backup that use their own non-standard key/password format — pass their key with `--key` and it's used as-is, without Home Assistant's `XXXX-XXXX-...` format check.
+
+## Extracting Specific Files
+
+Use `--extract` (or `-x`) to pull out only files matching a glob pattern instead of the whole backup, similar to `tar -x`. It can be given multiple times, and `*` matches across subdirectories:
+
+```bash
+# By filename, regardless of which component it's in
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x configuration.yaml -x secrets.yaml
+
+# By path pattern
+./decrypt_backup --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x 'homeassistant/*/www/*'
+```
 
 ## Security Notes
 

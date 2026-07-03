@@ -25,6 +25,7 @@ import re
 import platform
 import argparse
 import struct
+import fnmatch
 from pathlib import Path
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import (
@@ -122,6 +123,35 @@ def tar_filter(member, dest_path):
             return None
 
     return member
+
+def matches_patterns(relative_path, patterns):
+    """Check relative_path (and its basename) against a list of glob patterns.
+
+    Matching the basename too means a bare filename pattern like
+    "configuration.yaml" matches regardless of which component/subdirectory
+    it lives under, while an explicit path pattern with "/" still narrows
+    to that location. fnmatch's "*" matches "/" as well, so a pattern like
+    "homeassistant/*" selects everything under that component."""
+    basename = os.path.basename(relative_path)
+    return any(
+        fnmatch.fnmatch(relative_path, pattern) or fnmatch.fnmatch(basename, pattern)
+        for pattern in patterns
+    )
+
+def make_extract_filter(dest_path_prefix, patterns, match_counter):
+    """Build a tarfile filter combining the safety checks from tar_filter()
+    with optional glob-pattern member selection for --extract/-x."""
+    def _filter(member, dest_path):
+        member = tar_filter(member, dest_path)
+        if member is None or not patterns:
+            return member
+        relative_path = f"{dest_path_prefix}/{member.name}" if dest_path_prefix else member.name
+        if not matches_patterns(relative_path, patterns):
+            return None
+        if not member.isdir():
+            match_counter[0] += 1
+        return member
+    return _filter
 
 def extract_key_from_kit(kit_path):
     """Extract encryption key from emergency kit file."""
@@ -301,37 +331,43 @@ def extract_tar(filename):
     _tar.extractall(path=_dirname, filter=tar_filter)
     return _dirname
 
-def extract_plain_tar_gz(filename):
+def extract_plain_tar_gz(filename, patterns=None):
     """Extract an unencrypted tar.gz component (no SecureTar wrapping)."""
     _dirname = '.'.join(filename.split('.')[:-2])
     print(f'📦 Extracting {filename.split("/")[-1]} (unencrypted)...')
+    match_counter = [0]
     try:
         with tarfile.open(name=filename, mode="r:gz") as _tar:
-            _tar.extractall(path=_dirname, filter=tar_filter)
+            _tar.extractall(path=_dirname, filter=make_extract_filter(_dirname, patterns, match_counter))
     except tarfile.ReadError as e:
         print(f"❌ Error: Unable to extract {filename.split('/')[-1]}: {e}")
         return None
     except Exception as e:
         print(f"❌ Error during extraction: {str(e)}")
         return None
+    if patterns:
+        print(f"   → {match_counter[0]} matching file(s) extracted")
     return _dirname
 
-def extract_secure_tar(filename, password):
+def extract_secure_tar(filename, password, patterns=None):
     """Extract encrypted tar file."""
     if is_unencrypted_tar_gz(filename):
-        return extract_plain_tar_gz(filename)
+        return extract_plain_tar_gz(filename, patterns=patterns)
 
     _dirname = '.'.join(filename.split('.')[:-2])
     print(f'🔓 Decrypting {filename.split("/")[-1]}...')
+    match_counter = [0]
     try:
         with SecureTarFile(filename, password) as _tar:
-            _tar.extractall(path=_dirname, filter=tar_filter)
+            _tar.extractall(path=_dirname, filter=make_extract_filter(_dirname, patterns, match_counter))
     except tarfile.ReadError:
         print("❌ Error: Unable to extract SecureTar - possible wrong password or file is not encrypted")
         return None
     except Exception as e:
         print(f"❌ Error during extraction: {str(e)}")
         return None
+    if patterns:
+        print(f"   → {match_counter[0]} matching file(s) extracted")
     return _dirname
 
 def parse_args():
@@ -345,6 +381,7 @@ Examples:
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --file backup.tar
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./decrypted
+  %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x '*.yaml' -x secrets.yaml
 
   # Third-party add-on backup (e.g. Google Drive Backup) using its own
   # non-standard key/password instead of a Home Assistant emergency-kit key:
@@ -366,6 +403,18 @@ Examples:
         '--file',
         '-f',
         help='Specific backup .tar file to decrypt (defaults to all .tar files in current directory)'
+    )
+    parser.add_argument(
+        '--extract',
+        '-x',
+        action='append',
+        metavar='PATTERN',
+        help='Extract only files matching PATTERN instead of the whole backup '
+             '(glob wildcards like "*.yaml" supported; "*" also matches "/", '
+             'so it works across subdirectories; may be given multiple times). '
+             'Matches against each file\'s path within the decrypted output '
+             '(e.g. "homeassistant/*/configuration.yaml") or just its '
+             'filename (e.g. "secrets.yaml").'
     )
     parser.add_argument(
         '--output-dir',
@@ -491,7 +540,7 @@ def main():
                 continue
                 
             for secure_tar in secure_tars:
-                if extract_secure_tar(secure_tar, key):
+                if extract_secure_tar(secure_tar, key, patterns=args.extract):
                     if should_cleanup:
                         os.remove(secure_tar)  # Remove the encrypted file after successful extraction
                     success_count += 1
