@@ -89,25 +89,31 @@ def tar_filter(member, dest_path):
     """Filter for tar extraction: sanitizes filenames for Windows and blocks
     path traversal / symlink escapes. Passing a custom filter to extractall()
     bypasses tarfile's built-in 'data' filter protections entirely, so those
-    checks have to be reimplemented here instead of assumed."""
+    checks have to be reimplemented here instead of assumed.
+
+    Unsafe members are skipped (not extracted) rather than aborting the whole
+    archive: real HA add-on backups legitimately contain symlinks with
+    absolute link targets (e.g. "/config", "/backup") that reflect the
+    add-on container's own mount layout and are meaningless/unsafe once
+    extracted onto a different filesystem."""
     member.name = sanitize_filename(member.name)
 
     dest_root = os.path.realpath(dest_path)
     target_path = os.path.realpath(os.path.join(dest_path, member.name))
     if os.path.commonpath([dest_root, target_path]) != dest_root:
-        raise tarfile.FilterError(
-            f"Blocked path traversal attempt in tar member: {member.name}"
-        )
+        print(f"⚠️  Skipping tar member with path traversal attempt: {member.name}")
+        return None
 
     if member.issym() or member.islnk():
         link_target = os.path.realpath(
             os.path.join(dest_path, os.path.dirname(member.name), member.linkname)
         )
         if os.path.commonpath([dest_root, link_target]) != dest_root:
-            raise tarfile.FilterError(
-                f"Blocked tar member with unsafe link target: "
+            print(
+                f"⚠️  Skipping tar member with unsafe link target: "
                 f"{member.name} -> {member.linkname}"
             )
+            return None
 
     return member
 
