@@ -19,6 +19,7 @@ Usage:
 import sys
 import tarfile
 import glob
+import json
 import os
 import shutil
 import re
@@ -319,6 +320,55 @@ def is_unencrypted_tar_gz(filename):
     with open(filename, 'rb') as f:
         return f.read(len(GZIP_MAGIC_BYTES)) == GZIP_MAGIC_BYTES
 
+def read_backup_json(filename):
+    """Read and parse backup.json from the outer (unencrypted) backup tar."""
+    with tarfile.open(name=filename, mode="r") as _tar:
+        member = None
+        for candidate in ('./backup.json', 'backup.json'):
+            try:
+                member = _tar.getmember(candidate)
+                break
+            except KeyError:
+                continue
+        if member is None:
+            return None
+        return json.load(_tar.extractfile(member))
+
+def show_backup_info(filename):
+    """Print human-readable metadata from a backup's backup.json."""
+    print(f'\nℹ️  {filename}')
+    data = read_backup_json(filename)
+    if data is None:
+        print('  ⚠️  No backup.json found in this archive.')
+        return
+
+    print(f"  Name:            {data.get('name', '(unknown)')}")
+    print(f"  Slug:            {data.get('slug', '(unknown)')}")
+    print(f"  Date:            {data.get('date', '(unknown)')}")
+    print(f"  Type:            {data.get('type', '(unknown)')}")
+    print(f"  Protected:       {'Yes' if data.get('protected') else 'No'}")
+    print(f"  Compressed:      {'Yes' if data.get('compressed') else 'No'}")
+    if 'crypto' in data:
+        print(f"  Crypto:          {data['crypto']}")
+
+    homeassistant = data.get('homeassistant') or {}
+    if homeassistant.get('version'):
+        print(f"  HA version:      {homeassistant['version']}")
+    if data.get('supervisor_version'):
+        print(f"  Supervisor:      {data['supervisor_version']}")
+
+    folders = data.get('folders') or []
+    if folders:
+        print(f"  Folders:         {', '.join(folders)}")
+
+    addons = data.get('addons') or []
+    if addons:
+        print(f"  Add-ons ({len(addons)}):")
+        for addon in addons:
+            name = addon.get('name', addon.get('slug', '?'))
+            version = addon.get('version', '?')
+            print(f"    - {name} ({version})")
+
 def extract_tar(filename):
     """Extract regular tar file."""
     _dirname = '.'.join(filename.split('.')[:-1])
@@ -382,11 +432,22 @@ Examples:
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --file backup.tar
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./decrypted
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX -x '*.yaml' -x secrets.yaml
+  %(prog)s --info                             # Show backup.json metadata, no key needed
 
   # Third-party add-on backup (e.g. Google Drive Backup) using its own
   # non-standard key/password instead of a Home Assistant emergency-kit key:
   %(prog)s --key 'my-google-drive-backup-password' --file 584e4299.tar
         """
+    )
+    parser.add_argument(
+        '--info',
+        '-i',
+        action='store_true',
+        help='Display metadata from backup.json (name, date, HA/supervisor '
+             'version, add-ons, folders, etc.) for each backup found, then '
+             'exit without decrypting or extracting anything. No encryption '
+             'key is needed since backup.json lives in the outer, '
+             'unencrypted tar.'
     )
     parser.add_argument(
         '--key',
@@ -456,6 +517,35 @@ def main():
 
     # Parse command line arguments
     args = parse_args()
+
+    # --info is a standalone inspection mode: it reads backup.json straight
+    # out of the outer (unencrypted) tar, so it needs no key and does not
+    # extract or decrypt anything.
+    if args.info:
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+            os.chdir(args.output_dir)
+            print(f"📂 Output directory: {args.output_dir}")
+
+        if args.file:
+            if not os.path.exists(args.file):
+                print(f"❌ Error: File '{args.file}' not found!")
+                sys.exit(1)
+            tar_files = [args.file]
+        else:
+            tar_files = glob.glob('*.tar')
+
+        if not tar_files:
+            print("❌ Error: No .tar files found!")
+            print("Please place your backup .tar files in this directory.")
+            sys.exit(1)
+
+        for tar_file in tar_files:
+            try:
+                show_backup_info(tar_file)
+            except Exception as e:
+                print(f"❌ Error reading {tar_file}: {str(e)}")
+        return
 
     # Handle key: CLI arg > emergency kit > manual input
     # --key is unrestricted (empty/blank is treated as "not provided" and
