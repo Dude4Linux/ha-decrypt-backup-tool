@@ -57,6 +57,12 @@ SECURETAR_FILE_METADATA_FORMAT = "!Q8x"
 
 AES_IV_SIZE = 16
 
+# Real gzip streams always start with this; SecureTar's own encrypted output
+# never coincidentally does, so it doubles as an "is this actually
+# unencrypted?" check (same heuristic Home Assistant's own securetar package
+# uses internally).
+GZIP_MAGIC_BYTES = b"\x1f\x8b\x08"
+
 # SecureTar v3 (XChaCha20-Poly1305 secretstream) cipher-init layout:
 # root salt + validation salt + validation key + derivation salt + stream header
 V3_DERIVED_KEY_SALT_SIZE = 16
@@ -278,6 +284,11 @@ class SecureTarFile:
         data, self._v3_buffer = self._v3_buffer[:size], self._v3_buffer[size:]
         return data
 
+def is_unencrypted_tar_gz(filename):
+    """Check whether filename is already a plain (unencrypted) gzip stream."""
+    with open(filename, 'rb') as f:
+        return f.read(len(GZIP_MAGIC_BYTES)) == GZIP_MAGIC_BYTES
+
 def extract_tar(filename):
     """Extract regular tar file."""
     _dirname = '.'.join(filename.split('.')[:-1])
@@ -290,8 +301,26 @@ def extract_tar(filename):
     _tar.extractall(path=_dirname, filter=tar_filter)
     return _dirname
 
+def extract_plain_tar_gz(filename):
+    """Extract an unencrypted tar.gz component (no SecureTar wrapping)."""
+    _dirname = '.'.join(filename.split('.')[:-2])
+    print(f'📦 Extracting {filename.split("/")[-1]} (unencrypted)...')
+    try:
+        with tarfile.open(name=filename, mode="r:gz") as _tar:
+            _tar.extractall(path=_dirname, filter=tar_filter)
+    except tarfile.ReadError as e:
+        print(f"❌ Error: Unable to extract {filename.split('/')[-1]}: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Error during extraction: {str(e)}")
+        return None
+    return _dirname
+
 def extract_secure_tar(filename, password):
     """Extract encrypted tar file."""
+    if is_unencrypted_tar_gz(filename):
+        return extract_plain_tar_gz(filename)
+
     _dirname = '.'.join(filename.split('.')[:-2])
     print(f'🔓 Decrypting {filename.split("/")[-1]}...')
     try:
@@ -370,7 +399,13 @@ def main():
     args = parse_args()
 
     # Handle key: CLI arg > emergency kit > manual input
+    # --key is unrestricted (empty/blank is treated as "not provided" and
+    # falls through to kit detection / manual entry): third-party add-ons
+    # (e.g. Google Drive Backup) let users set an arbitrary password, not
+    # necessarily HA's own emergency-kit format, so we only enforce that
+    # format where it's actually guaranteed to apply.
     key = args.key
+    key_from_cli = bool(key)
 
     if not key:
         # Look for emergency kit file
@@ -398,8 +433,12 @@ def main():
                 break
             else:
                 print("❌ Invalid key format. Please try again.")
+    elif key_from_cli:
+        # --key is used verbatim as the password, no format restriction
+        print("✅ Using provided key")
     else:
-        # Validate key format from CLI
+        # Key came from the emergency kit, already extracted via the strict
+        # format regex in extract_key_from_kit() - re-validate defensively.
         if not re.match(r'^([A-Z0-9]{4}-){6}[A-Z0-9]{4}$', key):
             print("❌ Error: Invalid key format!")
             print("Key should be in the format: XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX")
