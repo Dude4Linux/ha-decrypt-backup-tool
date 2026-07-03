@@ -345,12 +345,22 @@ Examples:
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --file backup.tar
   %(prog)s --key XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX --output-dir ./decrypted
+
+  # Third-party add-on backup (e.g. Google Drive Backup) using its own
+  # non-standard key/password instead of a Home Assistant emergency-kit key:
+  %(prog)s --key 'my-google-drive-backup-password' --file 584e4299.tar
         """
     )
     parser.add_argument(
         '--key',
         '-k',
-        help='Encryption key (format: XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX)'
+        help='Encryption key. Home Assistant emergency-kit keys use the '
+             'format XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX, but that format is '
+             'only enforced when the key is read from an emergency kit file '
+             'or entered interactively. A key passed here via --key is used '
+             'verbatim with no format check, since some third-party add-ons '
+             '(e.g. Google Drive Backup) let users set an arbitrary '
+             'password instead.'
     )
     parser.add_argument(
         '--file',
